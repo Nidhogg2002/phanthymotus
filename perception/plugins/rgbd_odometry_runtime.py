@@ -40,6 +40,14 @@ def stamp_ns(msg):
     return msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
 
 
+def native_capture_stamp(color, depth):
+    # Pinned RGBDOdometry::commonCallback compares rclcpp::Time::seconds(),
+    # chooses the later image (depth on a double-precision tie), then retains
+    # that original header. Never round the chosen stamp or fuzzy-join results.
+    rgb, z = stamp_ns(color), stamp_ns(depth)
+    return rgb if float(rgb)/1e9 > float(z)/1e9 else z
+
+
 # pointcloud_slam pauses a segment for at most 1 s (wall time and capture
 # stamps after its last pose). Resume in-segment only within 0.8 s of the last
 # published capture, leaving margin for native latency jitter; otherwise the
@@ -571,7 +579,8 @@ class RgbdSession:
                 continue
             try:
                 (_, color), (_, depth) = pair
-                if not self._wait_for_imu(stamp_ns(depth)):
+                capture_stamp = native_capture_stamp(color, depth)
+                if not self._wait_for_imu(capture_stamp):
                     with self.lock:
                         self.counts['dropped_pairs'] += 1
                     continue
@@ -609,10 +618,10 @@ class RgbdSession:
                 with self.lock:
                     self._drain_imu()
                     ready = (self.gate.state != 'lost' if self.fusion is not None else
-                             self._imu_frame_ready(stamp_ns(depth), time.time_ns()))
+                             self._imu_frame_ready(capture_stamp, time.time_ns()))
                     if ready and not self.stop_event.is_set():
                         if self._fusing():
-                            for sample in self.observations.add_frame(stamp_ns(depth), image, z16, time.time_ns()):
+                            for sample in self.observations.add_frame(capture_stamp, image, z16, time.time_ns()):
                                 self._publish(sample)
                                 self.counts['estimates'] += 1
                             self._check_fusion(time.time_ns())

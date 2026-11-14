@@ -77,6 +77,14 @@ card. Connect a driver's `camera_rgbd` color (`image/jpeg`) and measured depth
 Depth is little-endian uint16 millimetres. Display-only or estimated depth,
 receipt-timed video and unregistered lenses are rejected.
 
+For each paired color/depth input, fusion and IMU coverage use the same original
+capture header selected by the pinned native estimator: the later image stamp,
+with depth selected when its double-precision seconds comparison ties. This
+matches [RTAB-Map's pair selection](https://github.com/introlab/rtabmap_ros/blob/2a31e433d2b072795ae90a62abcdd0c00691e04d/rtabmap_odom/src/nodelets/rgbd_odometry.cpp#L455).
+The selected stamp remains integer nanoseconds; neither input header is rewritten,
+and native pose/diagnostic results still require an exact stamp match. Always
+queuing the depth stamp would lose every native result when color was later.
+
 The card supervises the image's pinned RTAB-Map `rgbd_odometry` runtime. Its
 `state/odom` output carries `motus.odom/1` with `vendor.motus_slam` and can be
 connected to `pointcloud_slam` alongside native `sensor/pointcloud2`. The pose

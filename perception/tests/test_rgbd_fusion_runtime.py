@@ -271,8 +271,9 @@ def test_native_registration_diagnostics_are_capture_stamped_and_bounded(monkeyp
     assert len(session.registration_by_stamp) <= 32
 
 
-@pytest.mark.parametrize('imu_arrives_late', [False, True])
-def test_native_rgbd_worker_preserves_encoder_bytes_in_typed_depth_payload(monkeypatch, imu_arrives_late):
+@pytest.mark.parametrize('mode', ['visual', 'assisted', 'fusion'])
+@pytest.mark.parametrize('color_offset_ns', [-800_000, 0, 800_000])
+def test_native_rgbd_worker_preserves_encoder_bytes_in_typed_depth_payload(monkeypatch, mode, color_offset_ns):
     from array import array
     from copy import deepcopy
     import sys, threading, queue, zlib
@@ -295,8 +296,10 @@ def test_native_rgbd_worker_preserves_encoder_bytes_in_typed_depth_payload(monke
     monkeypatch.setitem(sys.modules, 'cv2', cv2)
     depth = np.full((480, 640), 1500, np.uint16)
     color_msg = NS(header=deepcopy(header), format='jpeg', data=jpeg)
+    color_stamp = 1_000_000_123+color_offset_ns
+    color_msg.header.stamp.sec, color_msg.header.stamp.nanosec = divmod(color_stamp, 10**9)
     depth_msg = NS(header=deepcopy(header), data=zlib.compress(depth.tobytes(), 1))
-    pair = ((1_000_000_123, color_msg), (1_000_000_123, depth_msg))
+    pair = ((color_stamp, color_msg), (1_000_000_123, depth_msg))
     pending = [pair]
     def get(timeout):
         if pending: return pending.pop()
@@ -317,7 +320,7 @@ def test_native_rgbd_worker_preserves_encoder_bytes_in_typed_depth_payload(monke
     published = []
     def publish(msg): published.append(msg); obj.stop_event.set()
     obj.rgbd = NS(publish=publish)
-    if imu_arrives_late:
+    if mode == 'assisted':
         from test_rgbd_imu import aid, packet
         obj.imu = aid()
         obj.imu.observe(packet(990_000_000), 991_000_000)
@@ -329,13 +332,38 @@ def test_native_rgbd_worker_preserves_encoder_bytes_in_typed_depth_payload(monke
             if elapsed[0] >= .04 and obj.imu.last_stamp == 990_000_000:
                 obj.imu.observe(packet(1_010_000_000), 1_011_000_000)
         obj._drain_imu = drain
+    if mode == 'fusion':
+        obj.fusion = Fusion()
+        obj.fusion.frame = 'optical'
+        obj.observations = CaptureObservations(obj.fusion)
+        obj._check_fusion = lambda now: None
+        obj._publish = lambda sample: None
+    coverage_stamps = []
+    wait_for_imu = obj._wait_for_imu
+    def wait(stamp):
+        coverage_stamps.append(stamp)
+        return wait_for_imu(stamp)
+    obj._wait_for_imu = wait
     obj._work()
     assert obj.gate.state != 'lost', obj.gate.reason
     assert len(published) == obj.counts['pairs'] == 1
     assert obj.counts['dropped_pairs'] == 0
+    native_stamp = max(color_stamp, 1_000_000_123)
+    assert coverage_stamps == [native_stamp]
+    if mode == 'fusion':
+        msg, info = messages(native_stamp)
+        msg.child_frame_id = 'optical'
+        obj.observations.result('pose', msg, 1_002_000_123)
+        obj.observations.result('info', info, 1_002_000_123)
+        assert len(obj.fusion.frames) == 1
+        assert obj.fusion.frames[0][0] == native_stamp
+        assert obj.fusion.frames[0][1] is not None
+        assert obj.observations.counts['pose_joined'] == 1
+        assert obj.observations.counts['info_joined'] == 1
     out = published[0]
     assert out.header == header and out.depth_compressed.header == header
     assert out.rgb_compressed.data == color_msg.data
+    assert out.rgb_compressed.header == color_msg.header
     assert out.depth_compressed.format == 'png'
     assert bytes(out.depth_compressed.data) == png
     assert encoded[0][0] == '.png' and encoded[0][2] == [cv2.IMWRITE_PNG_COMPRESSION, 1]
