@@ -490,7 +490,7 @@ class SlamStream:
                     remaining.append((stamp, cloud, received, context))
                     continue
                 pose = align_pose(self._poses, stamp, max_gap_ms=self.max_gap_ms)
-                frames = (pose.frame_id, pose.child_frame_id, pose.clock_id)
+                frames = (pose.frame_id, pose.child_frame_id, pose.clock_id, pose.pose_reference)
                 if pose.segment_id in self._segments:
                     if pose.segment_id != next(reversed(self._segments)):
                         raise ValueError('retired segment cannot be reused')

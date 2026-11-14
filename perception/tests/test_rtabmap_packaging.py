@@ -98,8 +98,9 @@ def test_gateway_fixture_rejects_nonpositive_or_non_aligned_capture_time(stamp):
         smoke().tracking_sample(stamp, 0.)
 
 
-def test_mapping_summary_reads_real_wire_pose_and_3d_geometry():
-    packet = struct.pack('<fffBIffffff', 1.25, -2.5, .5, 3, 2, 1., 2., .25, 3., 4., 1.75)
+@pytest.mark.parametrize('flags', [3, 15, 23, 39, 47])
+def test_mapping_summary_reads_real_wire_pose_and_3d_geometry(flags):
+    packet = struct.pack('<fffBIffffff', 1.25, -2.5, .5, flags, 2, 1., 2., .25, 3., 4., 1.75)
     assert smoke().mapping_packet_summary(packet) == {
         'pose': (1.25, -2.5, .5), 'point_count': 2, 'z_range_m': (.25, 1.75)}
 

@@ -4,7 +4,8 @@
  * Receives full map snapshots at 1Hz from the driver (voxel-deduplicated).
  * Binary protocol (v2, 17-byte header):
  *   [float32 robot_x, robot_y, robot_yaw] (12 bytes)
- *   [uint8 flags]                          (1 byte: bit0=full_map, bit1=has_z)
+ *   [uint8 flags]                          (1 byte: bit0=full_map, bit1=has_z, bit2=last_mapped,
+ *    bit3=camera_optical, bit4=body, bit5=heading_unavailable)
  *   [uint32 num_points]                    (4 bytes)
  *   Body: [float32 x, y, z] × N           (if has_z, 12 bytes/point)
  *      or [float32 x, y] × N              (if !has_z, 8 bytes/point, z=0)
@@ -32,6 +33,7 @@ export const MappingRenderer = {
   _positions: null,
   _colors: null,
   _robotMesh: null,
+  _markerLabel: null,
   _raf: null,
   _ro: null,
   _followBtn: null,
@@ -98,6 +100,11 @@ export const MappingRenderer = {
     this._robotMesh = new THREE.Mesh(coneGeo, coneMat);
     this._scene.add(this._robotMesh);
 
+    this._markerLabel = document.createElement('div');
+    this._markerLabel.style.cssText = 'position:absolute;left:8px;top:8px;padding:5px 8px;background:#000a;color:#fff;font-size:12px;pointer-events:none;white-space:pre-line';
+    this._markerLabel.textContent = '等待位姿标记';
+    this._el.appendChild(this._markerLabel);
+
     // Follow-robot toggle button
     this._followBtn = document.createElement('button');
     this._followBtn.style.cssText =
@@ -106,7 +113,7 @@ export const MappingRenderer = {
       'background:rgba(77,219,106,0.8);color:#fff;font-size:14px;cursor:pointer;' +
       'display:flex;align-items:center;justify-content:center;padding:0';
     this._followBtn.textContent = '\u2316'; // crosshair character
-    this._followBtn.title = 'Follow robot / Free browse';
+    this._followBtn.title = '跟随位姿标记 / 自由浏览';
     this._followBtn.addEventListener('click', () => {
       this._followRobot = !this._followRobot;
       this._updateFollowBtn();
@@ -246,7 +253,17 @@ export const MappingRenderer = {
     // Coordinate mapping: robot at (robotX, 0.2, -robotY)
     // Yaw: in original frame yaw=0 is +X, yaw=pi/2 is +Y
     // In Three.js: +X stays +X, +Y maps to -Z → rotation around Y axis = -yaw
+    const lastMapped = (flags & 4) !== 0;
+    const camera = (flags & 8) !== 0, body = (flags & 16) !== 0;
+    const unavailable = (flags & 32) !== 0 || (camera && body);
+    const reference = camera && !body ? '相机' : body && !camera ? '机身' : '类型未声明';
+    if (this._markerLabel) {
+      const scope = lastMapped ? '最后建图位姿' : '位姿标记（类型/时效未声明）';
+      this._markerLabel.textContent = `${scope} · ${reference}${unavailable ? '朝向不可用' : '朝向'}`
+        + (!lastMapped && body ? '（时效未声明）' : '') + '\n实时机身定位：未提供';
+    }
     if (this._robotMesh) {
+      this._robotMesh.visible = !unavailable && [robotX, robotY, robotYaw].every(Number.isFinite);
       this._robotMesh.position.set(robotX, 0.2, -robotY);
       this._robotMesh.rotation.set(0, -robotYaw, 0);
       this._robotPos.set(robotX, 0.2, -robotY);
@@ -287,6 +304,7 @@ export const MappingRenderer = {
     this._robotMesh?.material?.dispose();
     this._renderer?.dispose();
     this._followBtn?.remove();
+    this._markerLabel?.remove();
     this._el?.remove();
     this._el = null;
     this._renderer = null;
@@ -298,5 +316,6 @@ export const MappingRenderer = {
     this._positions = null;
     this._colors = null;
     this._followBtn = null;
+    this._markerLabel = null;
   },
 };

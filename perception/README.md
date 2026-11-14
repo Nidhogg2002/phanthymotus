@@ -5057,3 +5057,21 @@ autoload on, **176 passed** with it off.
 ```bash
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest perception/tests/test_measure_*.py -q
 ```
+
+### SLAM preview pose semantics
+
+The mapping marker is the last optimized mapped keyframe, not a live robot
+localization stream. Its explicit `pose_reference` is retained through SLAM
+decoding and interpolation: `body` projects local +X onto map XY;
+`camera_optical` projects local +Z. This only selects an axis of the actual pose;
+it does not infer or replace camera-to-body calibration. Unknown types and
+forward axes perpendicular to the map plane have no direction arrow.
+
+The existing 17-byte `sensor/mapping` v2 header and XYZ payload are unchanged.
+Additive flags are bit 2 last mapped pose, bit 3 camera optical, bit 4 body,
+and bit 5 heading unavailable. Core labels the marker accordingly and states
+that live body localization is not provided. Saved snapshots preserve these
+flags and yaw; legacy snapshots without a declared type retain their points
+and position but hide direction on reload. Deploy both the Perception encoder
+and Core renderer to obtain the labels and unavailable-heading handling;
+older renderers ignore the new flags.

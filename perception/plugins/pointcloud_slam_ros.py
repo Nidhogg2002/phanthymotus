@@ -312,6 +312,7 @@ class RtabmapNode(Node):
         namespace = self._namespace + '/segment_' + str(index)
         process = RtabmapProcess(self._session_dir / ('segment_' + str(index)) / 'rtabmap.db', namespace, self._settings)
         segment = dict(segment_id=pose.segment_id, frame_id='', source_frame_id=pose.frame_id,
+            pose_reference=getattr(pose, 'pose_reference', None),
             process=process, snapshot=None, graph=None, cloud=None, finalized=False, closing=False,
             native_loop_closures=0, native_proximity_detections=0, native_updates=0,
             last_info=None, subscriptions=[], last_preview=0., forwarded=0)
@@ -484,7 +485,8 @@ class RtabmapNode(Node):
             _, frame, pose = graph
             if not isinstance(frame, str) or not frame.strip():
                 return
-            packet = encode_mapping(cloud[2], pose, max_points=self._settings['preview_max_points'])
+            packet = encode_mapping(cloud[2], pose, max_points=self._settings['preview_max_points'],
+                                    pose_reference=segment.get('pose_reference'))
             segment['snapshot'], segment['frame_id'] = packet, frame
             if self._active is not segment or self._closed:
                 return

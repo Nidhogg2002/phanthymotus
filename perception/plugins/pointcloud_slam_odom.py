@@ -20,6 +20,7 @@ class PoseSample:
     quaternion: tuple
     covariance: tuple
     clock_id: str = None
+    pose_reference: str = None
 
 
 def _vector(value, length):
@@ -83,4 +84,10 @@ def decode_slam_odom(sample):
     covariance = pose.get("covariance")
     if covariance is not None:
         covariance = _vector(covariance, 36)
-    return PoseSample(stamp, frame, child, segment, position, quaternion, covariance, clock)
+    reference = quality.get('pose_reference', vendor.get('pose_reference'))
+    if (quality.get('pose_reference') is not None and vendor.get('pose_reference') is not None
+            and quality['pose_reference'] != vendor['pose_reference']):
+        raise ValueError('conflicting pose reference declarations')
+    if reference not in ('camera_optical', 'body'):
+        reference = None  # Neither frame names nor extrinsics declare a pose type.
+    return PoseSample(stamp, frame, child, segment, position, quaternion, covariance, clock, reference)

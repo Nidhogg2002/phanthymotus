@@ -69,13 +69,13 @@ def align_pose(samples, cloud_stamp_ns, *, max_gap_ms):
                 break
             left_ns = previous.stamp_ms * 1_000_000
             if (sample.stamp_ms - previous.stamp_ms > max_gap_ms or
-                    (sample.segment_id, sample.frame_id, sample.child_frame_id, sample.clock_id) !=
-                    (previous.segment_id, previous.frame_id, previous.child_frame_id, previous.clock_id)):
+                    (sample.segment_id, sample.frame_id, sample.child_frame_id, sample.clock_id, sample.pose_reference) !=
+                    (previous.segment_id, previous.frame_id, previous.child_frame_id, previous.clock_id, previous.pose_reference)):
                 break
             ratio = (cloud_stamp_ns - left_ns) / (stamp_ns - left_ns)
             position = tuple(a + ratio * (b - a) for a, b in zip(previous.position, sample.position))
             return PoseSample(cloud_stamp_ns // 1_000_000, sample.frame_id, sample.child_frame_id,
                               sample.segment_id, position,
-                              _slerp(previous.quaternion, sample.quaternion, ratio), None, sample.clock_id)
+                              _slerp(previous.quaternion, sample.quaternion, ratio), None, sample.clock_id, sample.pose_reference)
         previous = sample
     raise ValueError('no compatible pose at cloud timestamp')

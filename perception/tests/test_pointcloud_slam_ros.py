@@ -173,7 +173,7 @@ def test_mapping_snapshot_uses_actual_native_frame_and_optimized_pose(node):
         map_to_odom=NS(translation=NS(x=7., y=8., z=0.), rotation=NS(x=0., y=0., z=0., w=1.))))
     cloud_sub.callback(cloud(frame='native_map'))
     packet = published(node, '/pointcloud_slam/map')[0].messages[-1]
-    assert struct.unpack('<fffBI', bytes(packet[:17])) == (7., 8., 0., 3, 1)
+    assert struct.unpack('<fffBI', bytes(packet[:17])) == (7., 8., 0., 39, 1)
     node.close()
     saved = node.artifacts()['segments'][0]
     assert saved['frame_id'] == 'native_map' and saved['snapshot'] == packet
@@ -519,3 +519,24 @@ def test_native_unsupported_layout_is_rejected_before_process_start(node, layout
     assert node.status()['accepted_clouds'] == 0
     assert node.status()['forwarded_clouds'] == 0
     assert not NativeProcess.instances
+
+
+def test_camera_pose_reference_reaches_native_graph_preview(node):
+    sample = odom(1000)
+    sample['vendor']['pose_reference'] = 'camera_optical'
+    node._odom(NS(data=json.dumps(sample)))
+    node._cloud(cloud())
+    assert _wait_until(lambda: node.status()['forwarded_clouds'] == 1)
+    graph_sub = next(s for s in node.subscriptions if s.topic.endswith('/mapGraph'))
+    cloud_sub = next(s for s in node.subscriptions if s.topic.endswith('/cloud_map'))
+    # A +90 degree rotation around X points optical +Z toward map -Y.
+    graph_sub.callback(NS(header=NS(frame_id='native_map', stamp=NS(sec=1, nanosec=0)),
+        poses_id=[1], poses=[NS(position=NS(x=7., y=8., z=0.),
+            orientation=NS(x=2 ** -.5, y=0., z=0., w=2 ** -.5))],
+        map_to_odom=NS(translation=NS(x=0., y=0., z=0.),
+            rotation=NS(x=0., y=0., z=0., w=1.))))
+    cloud_sub.callback(cloud(frame='native_map'))
+    packet = published(node, '/pointcloud_slam/map')[0].messages[-1]
+    x, y, yaw, flags, count = struct.unpack('<fffBI', bytes(packet[:17]))
+    assert (x, y, flags, count) == (7., 8., 15, 1)
+    assert yaw == pytest.approx(np.pi / 2)
