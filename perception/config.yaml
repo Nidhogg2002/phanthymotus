@@ -287,7 +287,7 @@ plugins:
     # Change visual_frontend only while the card instance is stopped.
     visual_frontend: f2m_feature     # f2m_feature | f2f_optical_flow
     max_features: 1000              # integer 100..5000
-    # Per-instance opt-in: imu_assisted + short_term_compensation + depth_geometry.
+    # IMU assistance follows wiring; short_term_compensation/depth_geometry are per-instance options.
     # Default remains visual-only; compensation requires calibrated IMU translations.
 
   pointcloud_slam:

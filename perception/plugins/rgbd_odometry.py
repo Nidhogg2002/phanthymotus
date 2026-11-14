@@ -26,7 +26,8 @@ class RgbdOdometryPlugin:
         self.executor = executor
         self.instances = {}
         self.defaults = {k: (config or {}).get(k, False) for k in
-                         ('imu_assisted', 'short_term_compensation', 'depth_geometry')}
+                         ('short_term_compensation', 'depth_geometry')}
+        self.defaults['imu_assisted'] = False  # Derived from connected inputs, never a setting.
         self.defaults['visual_frontend'] = (config or {}).get('visual_frontend', 'f2m_feature')
         self.defaults['max_features'] = (config or {}).get('max_features', 1000)
         self.settings = {}
@@ -149,12 +150,10 @@ class RgbdOdometryPlugin:
 
     def get_tools(self):
         return [{'name': 'rgbd_odometry', 'type': 'processor', 'multiInstance': True,
-                 'description': 'RGB-D 视觉里程计：从配准彩色和实测深度估计相机位姿',
+                 'description': 'RGB-D 视觉里程计：彩色和实测深度估计相机位姿，接入相机 IMU 自动启用辅助',
                  'inputSchema': {'type': 'object', 'properties': {
                      'action': {'type': 'string', 'enum': ['start', 'stop', 'info']}}},
                  'configSchema': {'type': 'object', 'properties': {
-                     'imu_assisted': {'type': 'boolean', 'default': False, 'scope': 'instance',
-                                      'description': '启用可选相机 IMU 辅助（需要第三路 IMU 输入）'},
                      'short_term_compensation': {'type': 'boolean', 'default': False, 'scope': 'instance',
                          'description': '启用 ESKF 短时补偿，需要 IMU 完整标定及低运动初始化'},
                      'depth_geometry': {'type': 'boolean', 'default': False, 'scope': 'instance',
@@ -190,6 +189,9 @@ class RgbdOdometryPlugin:
             try:
                 settings = {k: args.get(k, self.settings.get(instance, self.defaults).get(k, False))
                             for k in self.defaults}
+                # Ignore saved legacy toggles: only the actual binding enables IMU.
+                settings['imu_assisted'] = bool(current and any(
+                    p['format'] == 'sensor/imu' for p in current[2]))
                 if any(type(settings[k]) is not bool for k in
                        ('imu_assisted', 'short_term_compensation', 'depth_geometry')):
                     raise ValueError('IMU, compensation and geometry flags must be boolean')
@@ -198,9 +200,6 @@ class RgbdOdometryPlugin:
                 if (type(settings['max_features']) is not int or
                         not 100 <= settings['max_features'] <= 5000):
                     raise ValueError('max_features must be an integer in [100, 5000]')
-                enabled = settings['imu_assisted']
-                if settings['short_term_compensation'] and not enabled:
-                    raise ValueError('short-term compensation requires imu_assisted')
                 if settings['depth_geometry'] and not settings['short_term_compensation']:
                     raise ValueError('depth geometry requires short-term compensation')
                 if action == 'config':
@@ -214,12 +213,16 @@ class RgbdOdometryPlugin:
                     if instance in self.retiring:
                         raise RuntimeError('finish failed RGB-D cleanup with stop before restarting')
                     topics = start_topics(args)
+                    enabled = settings['imu_assisted'] = isinstance(topics, list) and len(topics) == 3
                     try:
                         calibration = validate_start_inputs(args.get('camera_info'), topics, enabled)
                     except ValueError as error:
                         logging.getLogger(__name__).warning('RGB-D %s start inputs: %s', instance, error)
                         raise
                     calibration.update(settings)
+                    # No IMU binding always means pure visual, even with saved ESKF options.
+                    calibration['short_term_compensation'] = enabled and settings['short_term_compensation']
+                    calibration['depth_geometry'] = enabled and settings['depth_geometry']
                     mode = 'auto' if settings['visual_frontend'] == 'auto' else 'manual'
                     if mode == 'auto':
                         calibration['visual_frontend'] = _FRONTENDS[0]  # existing default starts

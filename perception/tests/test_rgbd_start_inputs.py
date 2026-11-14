@@ -53,7 +53,7 @@ def test_missing_declaration_names_topic_role_and_unconnected_declarations(card)
 
 @pytest.mark.parametrize('topics,needle', [
     (['/rgb', '/rgb'], 'duplicate /rgb'),
-    (['/rgb', '/depth', '/imu'], 'imu_assisted=false, 3 input(s) connected'),
+    (['/rgb', '/depth', '/imu', '/extra'], 'imu_assisted=false, 4 input(s) connected'),
 ])
 def test_count_and_duplicate_failures_are_specific(card, topics, needle):
     result = start(card, input_topics=topics, camera_info=declarations())
@@ -94,9 +94,10 @@ def test_refreshed_declarations_require_restart_and_are_then_adopted(card):
     assert card.instances['one'][0].calibration['K'][0, 0] == 410
 
 
-def test_imu_start_reports_missing_imu_link(card):
+def test_saved_imu_toggle_does_not_require_an_absent_link(card):
     card.dispatch('rgbd_odometry', dict(action='config', instance_id='one', imu_assisted=True))
     result = start(card, input_topics=['/rgb', '/depth'], camera_info=declarations())
-    assert 'imu_assisted=true, 2 input(s) connected' in result['message']
+    assert result['state'] == 'running'
+    assert result['config']['imu_assisted'] is False
     ok = validate_start_inputs(declarations(), ['/imu', '/depth', '/rgb'], True)
     assert ok['imu_topic'] == '/imu'

@@ -82,7 +82,7 @@ def test_compact_schema_keeps_configuration_and_original_odom_link(sessions):
     assert tool['inputSchema']['properties']['action']['enum'] == ['start', 'stop', 'info']
     settings = dict(imu_assisted=False, short_term_compensation=False, depth_geometry=False,
                     visual_frontend='f2f_optical_flow', max_features=200)
-    assert set(tool['configSchema']['properties']) == set(settings)
+    assert set(tool['configSchema']['properties']) == set(settings) - {'imu_assisted'}
     assert all(p['scope'] == 'instance' for p in tool['configSchema']['properties'].values())
     result = card.dispatch('rgbd_odometry', dict(action='config', instance_id='one', **settings))
     assert result['state'] == 'configured'

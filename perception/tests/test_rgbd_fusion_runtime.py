@@ -140,7 +140,7 @@ def test_fusion_mode_owns_imu_and_geometry_requires_compensation(monkeypatch):
     assert props['short_term_compensation']['default'] is False
     assert props['depth_geometry']['default'] is False
     assert card.dispatch('rgbd_odometry', dict(action='config', depth_geometry=True))['state'] == 'error'
-    assert card.dispatch('rgbd_odometry', dict(action='config', short_term_compensation=True))['state'] == 'error'
+    assert card.dispatch('rgbd_odometry', dict(action='config', short_term_compensation=True))['state'] == 'configured'
     result = card.dispatch('rgbd_odometry', dict(action='start', imu_assisted=True,
         short_term_compensation=True, depth_geometry=True,
         input_topics=['/rgb', '/depth', '/imu'], camera_info=declarations()))

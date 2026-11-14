@@ -164,7 +164,7 @@ schema remain unchanged.
 The optional `depth_geometry` setting is **not** another `visual_frontend`
 value: it is a bounded projective point-to-plane ICP correction for an
 initialized ESKF when the visual observation is rejected. It still requires
-`imu_assisted=true` and `short_term_compensation=true`. Accepted ICP
+a connected camera IMU and `short_term_compensation=true`. Accepted ICP
 corrections may stabilize coasting but **cannot** independently promote the
 state to `tracking`; mapping stays paused during coasting/recovering.
 Long visual outages, poorly constrained planes and bad IMU data still fail
@@ -204,9 +204,11 @@ A changed mount identity/epoch or invalid packet retires body evidence until
 the card is restarted; it does not reset the visual/IMU estimator. Hardware
 acceptance must verify the installed TF tree, domain, timestamps and calibration.
 
-Optional camera IMU assistance is selected per card with `imu_assisted=true`
-in its instance configuration (`config` action). Connect the source's third
-`sensor/imu` port as well as the two RGB-D ports. The third port remains the
+Camera IMU assistance is selected automatically by wiring: connect the source's
+`sensor/imu` port alongside the two RGB-D ports to enable it; connect only the
+two image ports for pure visual odometry. Legacy `imu_assisted` settings are ignored.
+ESKF remains an independent option; without an IMU connection, saved ESKF/depth
+assistance options are inactive and the session uses pure visual odometry. The third port remains the
 existing JSON `std_msgs/String` transport; `motus.imu/1` packets carry raw SI
 vectors, capture timestamps, shared RGB-D clock identity and actual factory/TF
 rotations into the camera axes. No Core metadata routing change is needed.
@@ -229,7 +231,7 @@ its source/health. The pinned RTAB-Map core ignores orientation quaternions
 whose xyz components are exactly zero (including a valid identity quaternion).
 We preserve the true estimate instead of perturbing it to force acceptance;
 physical validation must check the actual mounting and native prior behavior. Unsupported camera motion or missing TF leaves the camera's
-RGB-D output available; use `imu_assisted=false` when no usable IMU exists.
+RGB-D output available; disconnect the IMU input when no usable IMU exists.
 
 Actions are `start`, `stop`, `info` and `config`, with optional `instance_id`. Source
 startup must return its calibration before the downstream card starts. Tracking
@@ -297,10 +299,10 @@ on each deployment; offline tests do not establish physical accuracy.
 
 ### Optional short-term ESKF and depth assistance
 
-Set all three instance flags in the same `config` or `start` action:
+Connect the camera IMU input, then enable the two ESKF/geometry options in the same `config` or `start` action:
 
 ```json
-{"action":"config","instance_id":"card-one","imu_assisted":true,
+{"action":"config","instance_id":"card-one",
  "short_term_compensation":true,"depth_geometry":true}
 ```
 

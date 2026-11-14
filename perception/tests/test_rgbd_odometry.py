@@ -174,33 +174,9 @@ def test_shutdown_attempts_other_instances_when_one_cleanup_fails():
     assert other.stopped and 'second' not in card.instances
 
 
-def test_imu_toggle_is_per_instance_and_requires_third_binding(monkeypatch):
-    from plugins import rgbd_odometry as module
-    class RecordingSession(Session):
-        def __init__(self, calibration, executor, topic):
-            super().__init__(calibration,executor,topic);self.calibration=calibration
-    monkeypatch.setattr(module,'RgbdSession',RecordingSession)
-    monkeypatch.setattr(module,'require_runtime',lambda:None)
+def test_invalid_compensation_flag_is_still_rejected():
     card=RgbdOdometryPlugin({},_FakeExecutor())
-    field=card.get_tools()[0]['configSchema']['properties']['imu_assisted']
-    assert field['default'] is False and field['scope']=='instance'
-    result=card.dispatch('rgbd_odometry',{'action':'config','instance_id':'one','imu_assisted':True})
-    assert result['config']['imu_assisted'] is True
-    assert start(card,'one')['state']=='error'
-    assisted=card.dispatch('rgbd_odometry',dict(action='start',instance_id='one',
-        input_topics=['/rgb','/depth','/motion'],camera_info=declarations()))
-    assert assisted['state']=='running'
-    assert card.instances['one'][0].calibration['imu_topic']=='/motion'
-    assert {p['topic'] for p in assisted['topic_in']}=={'/rgb','/depth','/motion'}
-    assert start(card,'two')['state']=='running'
-    assert 'imu_topic' not in card.instances['two'][0].calibration
-    assert card.dispatch('rgbd_odometry',{'action':'config','instance_id':'one','imu_assisted':False})['state']=='error'
-    card.shutdown()
-
-
-def test_invalid_boolean_toggle_does_not_silently_enable_imu():
-    card=RgbdOdometryPlugin({},_FakeExecutor())
-    assert card.dispatch('rgbd_odometry',{'action':'config','imu_assisted':'false'})['state']=='error'
+    assert card.dispatch('rgbd_odometry',{'action':'config','short_term_compensation':'false'})['state']=='error'
 
 
 def test_visual_frontend_settings_are_instance_scoped_and_require_restart(monkeypatch):
