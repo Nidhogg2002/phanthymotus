@@ -25,19 +25,18 @@ function packet(flags) {
   return buffer;
 }
 
-test('mapped camera heading is labeled historical, not a live body heading', () => {
+test('mapped camera heading renders without a text overlay', () => {
   const r = renderer(); r.onData(packet(15));
-  assert.match(r._markerLabel.textContent, /最后建图.*相机/);
-  assert.match(r._markerLabel.textContent, /实时机身.*未提供/);
+  assert.equal(r._markerLabel.textContent, '');
   assert.equal(r._robotMesh.visible, true);
   assert.ok(Math.abs(r._robotMesh.rotation.values[1] - .7) < 1e-6);
   assert.deepEqual([...r._positions], [1, 3, -2]);
 });
-test('body, unavailable, and legacy markers do not claim real-time localization', () => {
+test('body, unavailable, and legacy markers preserve visibility without text', () => {
   const r = renderer();
-  r.onData(packet(23)); assert.match(r._markerLabel.textContent, /最后建图.*机身/);
+  r.onData(packet(23)); assert.equal(r._robotMesh.visible, true);
   r.onData(packet(39)); assert.equal(r._robotMesh.visible, false);
-  assert.match(r._markerLabel.textContent, /朝向不可用/);
-  r.onData(packet(3)); assert.match(r._markerLabel.textContent, /类型\/时效未声明/);
-  r.onData(packet(19)); assert.match(r._markerLabel.textContent, /机身.*时效未声明/);
+  assert.equal(r._markerLabel.textContent, '');
+  r.onData(packet(3)); assert.equal(r._robotMesh.visible, true);
+  r.onData(packet(19)); assert.equal(r._markerLabel.textContent, '');
 });

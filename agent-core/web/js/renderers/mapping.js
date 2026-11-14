@@ -33,7 +33,6 @@ export const MappingRenderer = {
   _positions: null,
   _colors: null,
   _robotMesh: null,
-  _markerLabel: null,
   _raf: null,
   _ro: null,
   _followBtn: null,
@@ -100,10 +99,6 @@ export const MappingRenderer = {
     this._robotMesh = new THREE.Mesh(coneGeo, coneMat);
     this._scene.add(this._robotMesh);
 
-    this._markerLabel = document.createElement('div');
-    this._markerLabel.style.cssText = 'position:absolute;left:8px;top:8px;padding:5px 8px;background:#000a;color:#fff;font-size:12px;pointer-events:none;white-space:pre-line';
-    this._markerLabel.textContent = '等待位姿标记';
-    this._el.appendChild(this._markerLabel);
 
     // Follow-robot toggle button
     this._followBtn = document.createElement('button');
@@ -253,15 +248,8 @@ export const MappingRenderer = {
     // Coordinate mapping: robot at (robotX, 0.2, -robotY)
     // Yaw: in original frame yaw=0 is +X, yaw=pi/2 is +Y
     // In Three.js: +X stays +X, +Y maps to -Z → rotation around Y axis = -yaw
-    const lastMapped = (flags & 4) !== 0;
     const camera = (flags & 8) !== 0, body = (flags & 16) !== 0;
     const unavailable = (flags & 32) !== 0 || (camera && body);
-    const reference = camera && !body ? '相机' : body && !camera ? '机身' : '类型未声明';
-    if (this._markerLabel) {
-      const scope = lastMapped ? '最后建图位姿' : '位姿标记（类型/时效未声明）';
-      this._markerLabel.textContent = `${scope} · ${reference}${unavailable ? '朝向不可用' : '朝向'}`
-        + (!lastMapped && body ? '（时效未声明）' : '') + '\n实时机身定位：未提供';
-    }
     if (this._robotMesh) {
       this._robotMesh.visible = !unavailable && [robotX, robotY, robotYaw].every(Number.isFinite);
       this._robotMesh.position.set(robotX, 0.2, -robotY);
@@ -304,7 +292,6 @@ export const MappingRenderer = {
     this._robotMesh?.material?.dispose();
     this._renderer?.dispose();
     this._followBtn?.remove();
-    this._markerLabel?.remove();
     this._el?.remove();
     this._el = null;
     this._renderer = null;
@@ -316,6 +303,5 @@ export const MappingRenderer = {
     this._positions = null;
     this._colors = null;
     this._followBtn = null;
-    this._markerLabel = null;
   },
 };
