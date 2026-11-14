@@ -761,6 +761,32 @@ class PointCloudPerceptionPlugin:
         if action == "info":
             with self._nodes_lock:
                 nodes = dict(self._nodes)
+            if instance_id:
+                nodes = {instance_id: nodes[instance_id]} if instance_id in nodes else {}
+            if not nodes:
+                # Canvas info queries precede start. Keep unresolved ports visible,
+                # and derive paths only from this card's validated depth input.
+                topics_out = [{"format": "sensor/pointcloud"}, {"format": "data/json"}]
+                info = {"name": "PointCloudPerception", "manufacture": "Embodied",
+                        "model": "depth", "state": "idle", "instances": {},
+                        "topic_in": [], "topic_out": topics_out,
+                        "desc": "3D point cloud from one depth map"}
+                input_topic = None
+                if args.get("input_topic") or args.get("input_topics"):
+                    try:
+                        input_topic = self._resolve_input(args)
+                    except ValueError as error:
+                        return {**info, "state": "error", "message": str(error)}
+                with self._nodes_lock:
+                    cfg = self._instance_configs.get(instance_id or input_topic or _DEFAULT_INSTANCE, {})
+                    metric = cfg.get("metric_cloud", self._plugin_cfg.get("metric_cloud", False)) is True
+                if metric:
+                    topics_out.append({"format": "sensor/pointcloud2"})
+                if input_topic:
+                    paths = (*output_topics_for(input_topic), input_topic + "/pointcloud_metric")
+                    for port, topic in zip(topics_out, paths):
+                        port["topic"] = topic
+                return info
             instances = {
                 key: {
                     "mode": node._mode,
