@@ -93,3 +93,32 @@ def test_lost_output_contains_no_frozen_pose():
 def test_tracking_output_rejects_bad_estimator_pose():
     value=pose();value['quaternion']=[0,0,0,0]
     with pytest.raises(ValueError):make_sample('tracking',1_234_567_890,'run1','camera-global',value)
+
+
+@pytest.mark.parametrize('field,first,second', [
+    ('source_clock', 'hardware_clock', 'global_time'),
+    ('mapping_offset_ns', 1000, 2000),
+    ('clock_mapping', 'fixed_arrival_offset', 'device_wall'),
+    ('clock_mapping_verified', False, True),
+    ('clock_mapping_uncertainty_ns', None, 0),
+    ('source_epoch', 'epoch-a', 'epoch-b'),
+    ('source_id', 'camera-a', 'camera-b'),
+])
+def test_shared_clock_name_cannot_hide_conflicting_capture_mapping(field, first, second):
+    data = declarations()
+    data['/rgb']['vendor'][field] = first
+    data['/depth']['vendor'][field] = second
+    with pytest.raises(ValueError, match='clock|source'):
+        validate_inputs(data, ['/rgb', '/depth'])
+
+
+def test_shared_unverified_mapping_is_retained_without_body_extrinsic():
+    data = declarations()
+    for d in data.values():
+        d['vendor'].update(source_clock='hardware_clock', mapping_offset_ns=123456,
+                           clock_mapping='fixed_arrival_offset', clock_mapping_verified=False,
+                           clock_mapping_uncertainty_ns=None, source_id='camera', source_epoch='boot')
+    result = validate_inputs(data, ['/rgb', '/depth'])
+    assert result['frame_id'] == 'camera_optical'
+    assert 'body_mount' not in result
+    assert all(d['vendor']['clock_mapping_verified'] is False for d in data.values())

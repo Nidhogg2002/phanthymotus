@@ -35,6 +35,13 @@ def validate_inputs(declarations, topics):
             any(color['vendor'].get(k) != depth['vendor'].get(k)
                 for k in ('frame_id', 'clock_id'))):
         raise ValueError('RGB-D inputs must share registered geometry and capture clock')
+    # Optional mapping/source evidence must describe one shared capture timeline.
+    # Matching clock names alone cannot conceal contradictory producer claims.
+    for key in ('source_clock', 'mapping_offset_ns', 'clock_mapping',
+                'clock_mapping_verified', 'clock_mapping_uncertainty_ns',
+                'source_id', 'source_epoch'):
+        if color['vendor'].get(key) != depth['vendor'].get(key):
+            raise ValueError('RGB-D source clock mapping declarations conflict: ' + key)
     if (depth['vendor'].get('depth_source') != 'measured' or
             depth['vendor'].get('depth_unit') != 'mm'):
         raise ValueError('RGB-D requires measured millimetre depth')
