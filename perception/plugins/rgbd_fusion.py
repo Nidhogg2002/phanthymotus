@@ -144,7 +144,11 @@ class InertialFilter:
         prior = self.P/.9 if correlated else self.P
         covariance = covariance/.1 if correlated else covariance
         innovation = h@prior@h.T+covariance
-        gain = np.linalg.solve(innovation, h@prior).T
+        # A matrix RHS dispatches threaded BLAS even for this 6x6 system on
+        # Jetson, blocking IMU callbacks for tens of milliseconds. Solve the
+        # independent columns with vector RHSs; retain the same equations and
+        # leave other plugins' process-wide BLAS thread settings untouched.
+        gain = np.array([np.linalg.solve(innovation, column) for column in (h@prior).T])
         delta = gain@residual
         self.p += delta[:3]
         self.v += delta[3:6]

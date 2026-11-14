@@ -264,3 +264,34 @@ def test_geometry_covariance_includes_rotation_induced_position_uncertainty():
     assert covariance[1, 5] == pytest.approx(.004030461741978671)
     assert covariance[2, 4] == pytest.approx(-.004030461741978671)
     assert np.linalg.eigvalsh(covariance).min() > 0
+
+
+@pytest.mark.parametrize('correlated', [False, True])
+def test_correction_matches_full_matrix_solution_with_cross_covariance(correlated):
+    """Vector RHS solves must preserve every gain column and covariance reset."""
+    from plugins.rgbd_fusion import exp_rotation, log_rotation, pose_values, skew
+    f = InertialFilter(1_000_000_000, pose(), [.01, 0, 0], [0, 0, G],
+                       [0, 0, 0], [.03, .01, 0])
+    f.propagate(.05, [.01, -.02, .03], [.1, 0, G])
+    measurement = pose(.002)
+    position, rotation = pose_values(measurement)
+    residual = np.r_[position-(f.p-f.R@f.lever), log_rotation(f.R.T@rotation)]
+    h = f.measurement_matrix()
+    basis = np.eye(6); basis[3:, 3:] = f.R.T
+    covariance = basis@np.diag([.0001, .0002, .0003, .0004, .0005, .0006])@basis.T
+    prior = f.P/.9 if correlated else f.P.copy()
+    if correlated:
+        covariance /= .1
+    # Full matrix RHS is the numerical reference, never the optimized path.
+    gain = np.linalg.solve(h@prior@h.T+covariance, h@prior).T
+    delta = gain@residual
+    expected = [f.p+delta[:3], f.v+delta[3:6], f.R@exp_rotation(delta[6:9]),
+                f.bg+delta[9:12], f.ba+delta[12:15]]
+    identity = np.eye(15)-gain@h
+    reset = np.eye(15); reset[6:9, 6:9] -= .5*skew(delta[6:9])
+    expected_p = reset@(identity@prior@identity.T+gain@covariance@gain.T)@reset.T
+    assert f.correct(measurement, np.diag([.0001, .0002, .0003, .0004, .0005, .0006]),
+                     correlated=correlated)
+    for actual, wanted in zip((f.p, f.v, f.R, f.bg, f.ba), expected):
+        np.testing.assert_allclose(actual, wanted, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(f.P, expected_p, rtol=1e-12, atol=1e-14)
