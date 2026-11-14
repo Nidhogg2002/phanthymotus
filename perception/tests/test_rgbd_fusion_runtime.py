@@ -290,6 +290,8 @@ def test_native_rgbd_worker_preserves_encoder_bytes_in_typed_depth_payload(monke
     encoded = []
     def encode(format, image, params):
         encoded.append((format, image.copy(), params))
+        if mode == 'assisted':
+            elapsed[0] += .04  # IMU may arrive while image preparation runs.
         return True, np.frombuffer(png, np.uint8)
     cv2 = NS(IMREAD_COLOR=1, IMWRITE_PNG_COMPRESSION=16,
              imdecode=lambda data, mode: np.zeros((480, 640, 3), np.uint8), imencode=encode)
@@ -340,9 +342,9 @@ def test_native_rgbd_worker_preserves_encoder_bytes_in_typed_depth_payload(monke
         obj._publish = lambda sample: None
     coverage_stamps = []
     wait_for_imu = obj._wait_for_imu
-    def wait(stamp):
+    def wait(stamp, **kwargs):
         coverage_stamps.append(stamp)
-        return wait_for_imu(stamp)
+        return wait_for_imu(stamp, **kwargs)
     obj._wait_for_imu = wait
     obj._work()
     assert obj.gate.state != 'lost', obj.gate.reason
@@ -350,6 +352,8 @@ def test_native_rgbd_worker_preserves_encoder_bytes_in_typed_depth_payload(monke
     assert obj.counts['dropped_pairs'] == 0
     native_stamp = max(color_stamp, 1_000_000_123)
     assert coverage_stamps == [native_stamp]
+    if mode == 'assisted':
+        assert elapsed[0] == .04  # No extra serial wait after IMU arrived during encoding.
     if mode == 'fusion':
         msg, info = messages(native_stamp)
         msg.child_frame_id = 'optical'

@@ -40,9 +40,10 @@ def test_fusion_propagates_bounded_gap_with_original_stamp_and_growing_uncertain
 
 
 @pytest.mark.parametrize('arrival', ['late', 'missing', 'stop'])
-def test_image_waits_boundedly_for_actual_imu_coverage(monkeypatch, arrival):
+@pytest.mark.parametrize('prepared_s', [0., .04, .16])
+def test_image_waits_boundedly_for_actual_imu_coverage(monkeypatch, arrival, prepared_s):
     obj, _, runtime, NS, _ = session(monkeypatch)
-    elapsed = [0.]
+    elapsed = [prepared_s]
     monkeypatch.setattr(runtime.time, 'monotonic', lambda: elapsed[0])
     monkeypatch.setattr(runtime.time, 'time_ns', lambda: 1_020_000_000+round(elapsed[0]*1e9))
     obj.imu.observe(packet(), 1_001_000_000)
@@ -64,9 +65,9 @@ def test_image_waits_boundedly_for_actual_imu_coverage(monkeypatch, arrival):
         if arrival == 'late' and elapsed[0] >= .04 and obj.imu.last_stamp < 1_020_000_000:
             obj.imu.observe(packet(1_020_000_000), runtime.time.time_ns())
     obj._drain_imu = drain
-    ready = obj._wait_for_imu(1_010_000_000)
+    ready = obj._wait_for_imu(1_010_000_000, deadline=.15)
     assert ready is (arrival == 'late')
-    assert elapsed[0] <= .151
+    assert elapsed[0] <= max(.151, prepared_s)
     if arrival == 'missing':
         assert elapsed[0] >= .15
         assert obj.imu.last_stamp == 1_000_000_000

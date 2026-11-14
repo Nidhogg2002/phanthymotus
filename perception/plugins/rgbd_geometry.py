@@ -86,11 +86,12 @@ class DepthRegistration:
             # Huber weighting suppresses mismatched surfaces without declaring
             # those pixels independent precision measurements.
             weights = np.minimum(1., .01/np.maximum(np.abs(residual), 1e-10))
-            hessian = jacobian.T @ (weights[:, None]*jacobian)
+            # Avoid threaded BLAS dispatch for these six-column reductions.
+            hessian = np.einsum('ni,nj->ij', jacobian, weights[:, None]*jacobian)
             eigenvalues = np.linalg.eigvalsh(hessian)
             if eigenvalues[0] <= eigenvalues[-1]*1e-4:
                 return None
-            delta = np.linalg.solve(hessian, -jacobian.T @ (weights*residual))
+            delta = np.linalg.solve(hessian, -np.einsum('ni,n->i', jacobian, weights*residual))
             transform = _increment(delta) @ transform
             if not _bounded_transform(transform):
                 return None

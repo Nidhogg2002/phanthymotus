@@ -551,10 +551,11 @@ class RgbdSession:
             self.gate.fault('IMU assistance: ' + str(self.imu.reason), 'imu')
         return covered
 
-    def _wait_for_imu(self, stamp):
+    def _wait_for_imu(self, stamp, *, deadline=None):
         # Images and IMU travel independently. Allow bounded arrival skew,
         # releasing the estimator lock while waiting for actual IMU coverage.
-        deadline = time.monotonic() + .15
+        if deadline is None:
+            deadline = time.monotonic() + .15
         while not self.stop_event.is_set():
             with self.lock:
                 self._drain_imu()
@@ -580,10 +581,8 @@ class RgbdSession:
             try:
                 (_, color), (_, depth) = pair
                 capture_stamp = native_capture_stamp(color, depth)
-                if not self._wait_for_imu(capture_stamp):
-                    with self.lock:
-                        self.counts['dropped_pairs'] += 1
-                    continue
+                # Prepare images while IMU arrives, retaining the original wait budget.
+                imu_deadline = time.monotonic() + .15
                 image = cv2.imdecode(np.frombuffer(color.data, np.uint8), cv2.IMREAD_COLOR)
                 decoder = zlib.decompressobj()
                 raw = decoder.decompress(bytes(depth.data), 640 * 480 * 2 + 1)
@@ -615,6 +614,10 @@ class RgbdSession:
                     info.r = np.eye(3).ravel().tolist()
                     info.p = [k[0], 0., k[2], 0., 0., k[4], k[5], 0., 0., 0., 1., 0.]
                     setattr(out, field, info)
+                if not self._wait_for_imu(capture_stamp, deadline=imu_deadline):
+                    with self.lock:
+                        self.counts['dropped_pairs'] += 1
+                    continue
                 with self.lock:
                     self._drain_imu()
                     ready = (self.gate.state != 'lost' if self.fusion is not None else
