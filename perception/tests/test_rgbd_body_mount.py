@@ -114,8 +114,7 @@ def test_invalid_mount_cannot_be_used_or_silently_recovered(change):
     assert observer.info(1_120_000_123)['status'] == 'lost'
 
 
-@pytest.mark.parametrize('stamp,now', [(1_000_000_123, 1_600_000_123),
-                                      (1_000_000_123, 900_000_123),
+@pytest.mark.parametrize('stamp,now', [(1_000_000_123, 900_000_123),
                                       (True, 1_000_000_000)])
 def test_invalid_packet_time_fails_closed(stamp, now):
     observer = mounts()
@@ -249,3 +248,21 @@ def test_session_discovers_mount_topic_from_camera_metadata(monkeypatch):
     finally:
         session.close()
     assert session.node.destroyed
+
+
+def test_delayed_mount_is_rejected_but_next_fresh_capture_recovers():
+    observer = mounts()
+    observer.observe(packet(), 1_600_000_123)
+    assert observer.info(1_600_000_123)['status'] == 'unavailable'
+    assert not observer.packets
+    assert observer.attach(sample(), 1_600_000_123)['vendor']['body_pose'] is None
+    observer.observe(packet(1_700_000_123), 1_710_000_123)
+    assert observer.attach(sample(1_700_000_123), 1_720_000_123)['vendor']['body_pose'] is not None
+
+
+def test_repeated_mount_still_requires_restart_after_stale_rejection():
+    observer = mounts()
+    observer.observe(packet(), 1_600_000_123)
+    with pytest.raises(ValueError):
+        observer.observe(packet(), 1_610_000_123)
+    assert observer.state == 'lost'

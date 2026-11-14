@@ -50,14 +50,21 @@ class CaptureMounts:
             stamp = packet.get('stamp_ns')
             if (packet.get('clock_id') != self.clock or packet.get('stamp_source') != 'measurement' or
                     type(stamp) is not int or stamp <= self.last_stamp or
-                    not -50_000_000 <= now_ns-stamp <= 500_000_000):
-                raise ValueError('body mount capture clock/time is invalid, stale, reset or repeated')
+                    now_ns-stamp < -50_000_000):
+                raise ValueError('body mount capture clock/time invalid: stamp={}, previous={}, age_ns={}'.format(
+                    stamp, self.last_stamp, now_ns-stamp if type(stamp) is int else None))
             status = packet.get('status')
             if status == 'available':
                 rigid(packet.get('matrix'))
             elif status != 'unavailable' or 'matrix' in packet:
                 raise ValueError('unavailable body mount cannot carry a held matrix')
             self.last_stamp = stamp
+            if now_ns-stamp > 500_000_000:
+                # A delayed packet is unusable, but does not change source identity.
+                # Keep the ordering watermark and allow the next fresh capture.
+                self.state, self.reason = 'unavailable', 'body mount capture is stale'
+                self.packets.clear()
+                return
             self.state, self.reason = status, packet.get('reason')
             self.packets[stamp] = deepcopy(packet)
             while len(self.packets) > 128:
