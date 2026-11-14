@@ -94,7 +94,7 @@ def test_corrected_sigma_between_old_and_new_limits_can_recover_tracking():
     diagnostic = sample['vendor']['fusion']['last_frame']
     assert .10 < diagnostic['corrected_sigma_m'] <= .20
     assert diagnostic['visual'] == 'accepted'
-    assert c.reason == 'waiting for three consistent visual observations'
+    assert c.reason == 'waiting for three consistent observations'
     for _ in range(2):
         stamp = imu_until(c, stamp, .05)  # complete recovery within the 1 s map pause
         sample = c.observe_frame(stamp, *images(), noisy(), stamp+1_000_000)

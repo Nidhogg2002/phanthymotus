@@ -252,6 +252,7 @@ class CaptureObservations:
         self.fusion = fusion
         self.frames = OrderedDict()
         self.last_added = 0
+        self.geometry_capture = None
         self.counts = Counter()
 
     def add_frame(self, stamp, color, depth, now):
@@ -304,6 +305,13 @@ class CaptureObservations:
 
     def drain(self, now):
         outputs = []
+        if self.geometry_capture is not None:
+            self.fusion.poll_geometry(now)
+            if self.fusion.geometry_job is not None:
+                return outputs
+            # Complete the measured capture before any newer filter state.
+            outputs.append(self.fusion.output(self.geometry_capture))
+            self.geometry_capture = None
         while self.frames:
             stamp, entry = next(iter(self.frames.items()))
             ready = ('pose' in entry and 'info' in entry) or getattr(entry.get('info'), 'lost', False)
@@ -317,8 +325,12 @@ class CaptureObservations:
             if not coverage:
                 self.counts['imu_uncovered'] += 1
             visual, reason = self._visual(stamp, entry)
-            outputs.append(self.fusion.observe_frame(stamp, entry['color'], entry['depth'], visual, now,
-                                                     reason=reason, arrival_ns=entry['added']))
+            sample = self.fusion.observe_frame(stamp, entry['color'], entry['depth'], visual, now,
+                                               reason=reason, arrival_ns=entry['added'])
+            if getattr(self.fusion, 'geometry_job', None) is not None:
+                self.geometry_capture = stamp
+                break
+            outputs.append(sample)
         return outputs
 
 
@@ -657,6 +669,10 @@ class RgbdSession:
         """
         reason = str(self.fusion.reason)
         offset = self.fusion.tracking_offset()
+        if self.fusion.last_tracking is not None and offset is None:
+            self.gate.fault('ESKF lost after geometry tracking; no capture-matched visual pose '
+                            'to prove fallback continuity', 'fusion')
+            return
         if offset is not None and (offset[0] > FALLBACK_OFFSET_M or offset[1] > FALLBACK_OFFSET_RAD):
             self.gate.fault(f'ESKF lost ({reason}); visual-only fallback cannot prove coordinate '
                             f'continuity (fused/visual offset {offset[0]:.3f} m, '
@@ -837,7 +853,9 @@ class RgbdSession:
                     self.fusion.fault('low-motion fusion initialization timed out; restart required')
                 self._check_fusion(now)
                 if self._fusing():
-                    if self.fusion.state != 'tracking':
+                    # A bounded pending observation has no final verdict yet.
+                    # A premature pause would clear SLAM's matching cloud.
+                    if self.fusion.state != 'tracking' and self.observations.geometry_capture is None:
                         self._publish(self.fusion.output(self.fusion.last_frame or now))
                     return
             if self.imu is not None and getattr(self, 'fusion', None) is None:

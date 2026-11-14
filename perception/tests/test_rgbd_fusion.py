@@ -184,7 +184,7 @@ def test_missing_camera_frames_stop_claiming_tracking_before_hard_loss():
     assert sample['vendor']['fusion']['prediction_stamp_ns'] == t
 
 
-def test_geometry_assists_loss_but_never_becomes_a_tracking_measurement():
+def test_verified_geometry_keeps_tracking_at_its_measured_capture():
     from test_rgbd_geometry import render_room
     calibration = np.array([[460., 0, 319.5], [0, 460., 239.5], [0, 0, 1.]])
     c = ShortTermFusion('run', 'optical', 'capture-clock', calibration, depth_geometry=True)
@@ -202,9 +202,9 @@ def test_geometry_assists_loss_but_never_becomes_a_tracking_measurement():
     current = render_room(transform, (480, 640), calibration)
     out = c.observe_frame(stamp, color, current, None, stamp)
     assert out['vendor']['fusion']['aid'] == 'depth_geometry'
-    prediction = out['vendor']['fusion']['prediction']
-    assert 0 < prediction['position'][0] < .03
-    assert out['pose'] is None and out['vendor']['fusion']['mapping_allowed'] is False
+    assert 0 < out['pose']['position'][0] < .03
+    assert out['vendor']['fusion']['mapping_allowed'] is True
+    assert decode_slam_odom(out).stamp_ms == stamp//1_000_000
     assert c.last_visual == t
 
 

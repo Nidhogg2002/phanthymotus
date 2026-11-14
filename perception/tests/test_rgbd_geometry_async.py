@@ -71,7 +71,7 @@ def test_registration_runs_without_blocking_frame_processing_then_applies():
         while c.aid != 'depth_geometry' and time.monotonic() < deadline:
             c.poll_geometry(stamp+10_000_000)
             time.sleep(.01)
-        assert c.aid == 'depth_geometry' and c.state == 'coasting'
+        assert c.aid == 'depth_geometry' and c.state == 'tracking'
         assert c.quality['geometry']['accepted'] is True
     finally:
         registration.release.set(); assert worker.close(2)
@@ -220,3 +220,17 @@ def test_stuck_geometry_worker_keeps_session_owned_for_explicit_stop(fused):
     worker.close = close
     s.close()
     assert s.node.destroyed and worker.closed
+
+
+def test_watchdog_does_not_clear_slam_clouds_before_geometry_decision(fused):
+    make, now, _ = fused
+    s = make(depth_geometry=True)
+    s.fusion.state = 'coasting'
+    s.fusion.status = lambda now: 'coasting'
+    s.fusion.poll_geometry = lambda now: None
+    s.observations.geometry_capture = now[0]
+    s.observations.drain = lambda now: []
+    published = []
+    s._publish = published.append
+    s._watchdog()
+    assert published == []

@@ -179,8 +179,8 @@ INERTIAL_LIMIT_NS = 1_000_000_000
 # 250 ms join deadline, so 500 ms without any processed frame (>= 4 Hz) means
 # frames stopped, not that the pipeline is merely latent.
 FRAME_SILENCE_NS = 500_000_000
-# Off-lock registration must finish within the visual join deadline; later
-# results describe a superseded filter state and are discarded.
+# Off-lock registration has its own bounded wait after visual resolution.
+# CaptureObservations holds subsequent filter updates within this deadline.
 GEOMETRY_DEADLINE_NS = 250_000_000
 
 
@@ -333,8 +333,8 @@ class ShortTermFusion:
 
     def observe_frame(self, stamp, color, depth, visual_pose, now_ns, reason=None, *, arrival_ns=None):
         from .rgbd_geometry import observation_quality
-        # A registration for an earlier state applies only before this frame
-        # advances the filter; otherwise it is discarded, never replayed.
+        # CaptureObservations waits for the previous geometry decision first.
+        # Direct callers cannot apply an older result after advancing state.
         self.poll_geometry(now_ns, force=True)
         diagnostic = dict(capture_ns=stamp, arrival_ns=arrival_ns, processed_ns=now_ns,
                           latency_ms=round((now_ns-stamp)/1e6, 1), predicted_sigma_m=None,
@@ -378,37 +378,43 @@ class ShortTermFusion:
                 self.revision += 1
                 diagnostic['visual'] = 'accepted'
                 self.last_visual, self.last_visual_wall = stamp, now_ns
-                corrected = diagnostic['corrected_sigma_m'] = self.position_sigma()
-                if corrected > SIGMA_LIMIT_M:
-                    self.good = 0
-                    self.state, self.reason = 'recovering', f'corrected position uncertainty exceeds {SIGMA_LIMIT_M:.2f} m'
-                    if stamp-self.last_confident > INERTIAL_LIMIT_NS:
-                        self.fault(f'corrected position uncertainty exceeded {SIGMA_LIMIT_M:.2f} m for more than 1 s')
-                else:
-                    self.last_confident = stamp
-                    self.good += 1
-                    if self.state == 'tracking' or self.good >= 3:
-                        if (self.state != 'tracking' and self.last_tracking is not None and
-                                stamp-self.last_tracking[0] > INERTIAL_LIMIT_NS):
-                            self.fault('fusion recovery exceeded the 1 s mapping pause; restart required')
-                        else:
-                            self.state, self.reason = 'tracking', None
-                            self.reference = (stamp, depth.copy(), deepcopy(visual_pose))
-                            self.last_tracking = (stamp, self.filter.camera_pose(), deepcopy(visual_pose))
-                    else:
-                        self.state, self.reason = 'recovering', 'waiting for three consistent visual observations'
+                diagnostic['corrected_sigma_m'] = self.position_sigma()
+                self._accept_correction(stamp, visual_pose, depth)
             else:
-                self.good = 0
                 self.state, self.reason = 'coasting', reason or 'visual observation rejected'
                 self._assist_with_geometry(stamp, depth, now_ns, diagnostic)
                 diagnostic['corrected_sigma_m'] = self.position_sigma() if self.aid == 'depth_geometry' else None
+                if self.geometry_job is None and self.aid != 'depth_geometry':
+                    self.good = 0
                 # A pending registration defers this judgement to its result or
-                # deadline; the next frame re-judges after its own prediction.
+                # deadline; subsequent captures remain queued until it resolves.
                 if self.geometry_job is None and self.position_sigma() > SIGMA_LIMIT_M:
                     self.fault(f'predicted position uncertainty exceeds {SIGMA_LIMIT_M:.2f} m without an accepted visual correction')
         except (ValueError, TypeError, KeyError, np.linalg.LinAlgError) as error:
             self.fault(error)
         return self._finish(stamp, diagnostic)
+
+    def _accept_correction(self, stamp, visual_pose=None, depth=None):
+        corrected = self.position_sigma()
+        if corrected > SIGMA_LIMIT_M:
+            self.good = 0
+            self.state, self.reason = 'recovering', f'corrected position uncertainty exceeds {SIGMA_LIMIT_M:.2f} m'
+            if stamp-self.last_confident > INERTIAL_LIMIT_NS:
+                self.fault(f'corrected position uncertainty exceeded {SIGMA_LIMIT_M:.2f} m for more than 1 s')
+            return
+        self.last_confident = stamp
+        self.good += 1
+        if self.state == 'tracking' or self.good >= 3:
+            if (self.state != 'tracking' and self.last_tracking is not None and
+                    stamp-self.last_tracking[0] > INERTIAL_LIMIT_NS):
+                self.fault('fusion recovery exceeded the 1 s mapping pause; restart required')
+            else:
+                self.state, self.reason = 'tracking', None
+                if visual_pose is not None:
+                    self.reference = (stamp, depth.copy(), deepcopy(visual_pose))
+                self.last_tracking = (stamp, self.filter.camera_pose(), deepcopy(visual_pose))
+        else:
+            self.state, self.reason = 'recovering', 'waiting for three consistent observations'
 
     def _assist_with_geometry(self, stamp, depth, now_ns, diagnostic):
         if not (self.geometry and self.reference and stamp-self.reference[0] <= 1_000_000_000):
@@ -418,8 +424,8 @@ class ShortTermFusion:
         p, r = pose_values(self.filter.camera_pose())
         initial = np.eye(4)
         initial[:3, :3], initial[:3, 3] = ref_r.T@r, ref_r.T@(p-ref_p)
-        # Geometry only corrects a bounded prediction; it never
-        # promotes coasting to tracking or authorizes map integration.
+        # Only a verified observation of this exact capture may authorize mapping.
+        # Keep the visual reference and its original one-second lifetime.
         self.quality['geometry'] = dict(attempted=True, accepted=False, reason='registration_rejected')
         if self.geometry_runner is not None:
             token = (self.segment, stamp, self.revision)
@@ -451,6 +457,7 @@ class ShortTermFusion:
             return
         self.geometry_job = None
         geometry = self.quality.setdefault('geometry', dict(attempted=True, accepted=False))
+        self.status(now_ns)
         if now_ns > job['deadline']:
             outcome = 'timeout_discarded'
         elif status != 'done':
@@ -469,7 +476,9 @@ class ShortTermFusion:
                 job['diagnostic']['corrected_sigma_m'] = self.position_sigma()
         if outcome.endswith('discarded'):
             geometry['reason'] = outcome
-        job['diagnostic']['geometry'] = outcome
+        if outcome != 'accepted':
+            self.good = 0
+        job['diagnostic'].update(geometry=outcome, state=self.state, aid=self.aid)
         if (not force and self.state == 'coasting' and self.filter is not None and
                 self.position_sigma() > SIGMA_LIMIT_M):
             self.fault(f'predicted position uncertainty exceeds {SIGMA_LIMIT_M:.2f} m without an accepted visual correction')
@@ -484,6 +493,7 @@ class ShortTermFusion:
         if self.filter.correct(measured, geom_cov, correlated=True):
             self.aid = 'depth_geometry'
             self.quality['geometry'].update(accepted=True, reason=None)
+            self._accept_correction(self.filter.stamp)
         else:
             self.quality['geometry']['reason'] = 'fusion_gate_rejected'
 
@@ -494,7 +504,7 @@ class ShortTermFusion:
 
     def tracking_offset(self):
         """Fused-vs-visual offset at the last tracking capture, or None."""
-        if self.last_tracking is None:
+        if self.last_tracking is None or self.last_tracking[2] is None:
             return None
         _, fused, visual = self.last_tracking
         (fp, fr), (vp, vr) = pose_values(fused), pose_values(visual)

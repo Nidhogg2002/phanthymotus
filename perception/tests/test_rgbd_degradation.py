@@ -403,3 +403,15 @@ def test_fusion_native_frame_change_requires_a_new_segment(fused, field, prior_i
     assert s.gate.state == 'lost' and s.gate.loss_kind == 'frame'
     assert s.fallback is None
     assert all(json.loads(raw)['pose'] is None for raw in s.publisher.messages)
+
+
+def test_geometry_tracking_cannot_fake_visual_fallback_continuity(fused):
+    make, now, _ = fused
+    s = make()
+    from test_rgbd_fusion import pose
+    s.fusion.last_tracking = (now[0]-10_000_000, pose(), None)
+    s.fusion.fault('visual anchor expired')
+    s._check_fusion(now[0])
+    assert s.fallback is None
+    assert s.gate.state == 'lost'
+    assert 'no capture-matched visual pose' in s.gate.reason

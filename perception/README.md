@@ -165,10 +165,12 @@ The optional `depth_geometry` setting is **not** another `visual_frontend`
 value: it is a bounded projective point-to-plane ICP correction for an
 initialized ESKF when the visual observation is rejected. It still requires
 a connected camera IMU and `short_term_compensation=true`. Accepted ICP
-corrections may stabilize coasting but **cannot** independently promote the
-state to `tracking`; mapping stays paused during coasting/recovering.
-Long visual outages, poorly constrained planes and bad IMU data still fail
-closed. No geometry-only automatic recovery is claimed.
+corrections count as measured observations at their original capture time.
+Three consistent accepted visual/depth observations can recover `tracking`;
+pending work and IMU-only predictions never authorize mapping. The original
+visual reference and its 1 s lifetime are retained, so this does not provide
+unbounded geometry-only odometry. Poorly constrained planes and bad IMU data
+still fail closed.
 
 `info().registration` and optional `vendor.registration` on each odometry
 sample contain the selected frontend, native inliers/loss (only when a native
@@ -374,7 +376,9 @@ mode — continues as an explicit `visual_only` fallback (`vendor.fallback`,
 This stays in the segment only when the fused/visual offset at the last
 published fused capture is within 2 cm / 2° (unvalidated engineering bound),
 or when no fused pose was ever published; otherwise the segment is retired
-for supervised new-segment recovery. Fallback poses obey the same
+for supervised new-segment recovery. After a geometry-only tracking capture
+there is no same-capture native visual comparison, so the old segment is
+retired rather than assuming zero offset. Fallback poses obey the same
 three-estimate, continuity, pause-declaration and 1 s/0.8 s rules. The ESKF is not
 restarted inside that segment; a later new segment retries it. Predictions
 are never published as tracking and a stale IMU is never fused again.
@@ -382,8 +386,10 @@ Camera frame/segment, capture-clock and capture-queue faults end the segment
 instead of entering visual-only fallback.
 
 If vision becomes unavailable, `vendor.motus_slam.status` changes to
-`coasting`, followed by `recovering` until three consistent visual
-observations pass innovation checks. During both states `pose` is null;
+`coasting`, followed by `recovering` until three consistent visual or verified
+depth observations pass innovation checks. A pending depth observation retains
+its capture and original deadline before a final tracking/coasting output;
+this avoids prematurely clearing the matching SLAM cloud. During both states `pose` is null;
 `vendor.fusion.prediction` contains the optional camera pose and covariance,
 with its own `prediction_stamp_ns`, aid and quality diagnostics. Predictions
 are for inspection/recovery, not validated navigation feedback. SLAM pauses
@@ -438,17 +444,17 @@ propagates rotational uncertainty into position uncertainty at the offset.
 Mapping remains paused throughout coasting.
 
 Registration runs on one per-session worker thread, never under the session
-lock, so IMU ingress, native result joins, the watchdog and stop are not held
-behind ICP (about 47 ms median per registration on an arm64 development host;
-Jetson timing has not been measured). At most one registration runs and one
-waits; a newer request replaces the waiting one. A result is applied only to
-the exact filter state it was computed for, before the next frame advances the
-filter; otherwise, after its 250 ms deadline, on failure, stop or restart it is
-discarded. A pending registration defers that frame's predicted-uncertainty
-judgement until its result, deadline or the next frame; the 1 s visual bound
-is unaffected. Registration errors skip assistance instead of ending the ESKF.
-If ICP is slower than the frame interval on the target, results will mostly
-be discarded — measure before relying on depth assistance.
+lock. While a capture awaits geometry, IMU and native results keep arriving,
+but later frames remain in the existing bounded capture queue. The filter
+therefore stays at the measured capture until its result or unchanged 250 ms
+deadline; a subsequent frame cannot prematurely discard the observation.
+Final outputs are emitted in capture order, never by attaching an old pose
+to a newer timestamp. A rejected/expired observation resets recovery evidence;
+accepted geometry uses the same uncertainty and recovery checks as vision.
+Stop, invalid calibration/time, and the 1 s visual-anchor bound still retire
+the segment. Geometry errors skip assistance. Jetson timing remains relevant:
+prior on-device measurements ranged above the deadline under load, so these
+state-machine tests do not establish real turning accuracy or throughput.
 
 All three source adapters and the fusion/SLAM boundaries have offline tests.
 Synthetic trajectories and rendered rooms validate code signs, units and
