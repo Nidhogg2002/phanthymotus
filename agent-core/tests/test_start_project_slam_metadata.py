@@ -245,3 +245,19 @@ def test_metadata_start_failure_identifies_the_card(rig, monkeypatch, source, to
     done = next(e['payload'] for e in rig.events if e['type'] == 'project_start_done')
     assert done['errors'] == [f'{tool} (failed-instance)']
     assert 'failed-instance' not in rig.starts and rolled_back == [True]
+
+
+def test_connected_cloud_capture_mount_is_forwarded_without_other_ports():
+    cloud = {'schema': 'motus.camera/1', 'topic': '/metric', 'format': 'sensor/pointcloud2',
+             'vendor': {'body_mount': {'topic': '/actual/mount'}}}
+    other = {'schema': 'motus.camera/1', 'topic': '/unconnected', 'format': 'sensor/pointcloud2'}
+    infos = {'c': {'topic_out': [{'topic': '/metric', 'format': 'sensor/pointcloud2'}],
+                   'camera_info': [other, cloud]}}
+    wire = _wire('c', 0, 'slam', '/metric', 'sensor/pointcloud2')
+    got = collect_slam_inputs([wire], infos, lambda c: c['fromTopic'])
+    assert got['camera_infos'] == {'/metric': cloud}
+    got['camera_infos']['/metric']['vendor']['body_mount']['topic'] = '/changed'
+    assert cloud['vendor']['body_mount']['topic'] == '/actual/mount'
+    infos['c']['camera_info'].append(cloud)
+    with pytest.raises(SlamRoutingError, match='duplicate'):
+        collect_slam_inputs([wire], infos, lambda c: c['fromTopic'])

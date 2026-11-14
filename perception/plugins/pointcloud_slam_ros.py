@@ -198,6 +198,15 @@ class RtabmapNode(Node):
             self.stream = SlamStream(**{key: self._settings[key] for key in keys},
                 extrinsic_mode=self._settings.get('extrinsic_mode', 'static'),
                 input_contract=input_contract, on_frame=self._queue_frame)
+            self._capture_clouds = None
+            if self._settings.get('capture_mount'):
+                if input_contract:
+                    raise ValueError('capture mount cannot replace an explicit SLAM input contract')
+                from .pointcloud_slam_capture_mount import CaptureClouds
+                self._capture_clouds = CaptureClouds(self._settings['capture_mount'],
+                                                    max_pending=self.stream.max_pending)
+                self.create_subscription(String, self._settings['capture_mount']['declaration']['topic'],
+                                         self._capture_mount, _QOS)
             self._map_pub = self.create_publisher(UInt8MultiArray, self._map_topic, _QOS)
             self.create_subscription(String, odom_topic, self._odom, _QOS)
             self.create_subscription(PointCloud2, cloud_topic, self._cloud, _QOS)
@@ -220,9 +229,29 @@ class RtabmapNode(Node):
             sample = None
         with self._lock:
             if not self._stopped():
-                self.stream.odom(sample, now=self._receipt_clock(), measurement_now_ns=self._measurement_now())
+                try:
+                    if self._capture_clouds is not None:
+                        self._capture_clouds.validate_pose(sample, self.stream)
+                    self.stream.odom(sample, now=self._receipt_clock(), measurement_now_ns=self._measurement_now())
+                except ValueError as error:
+                    self.stream.last_error = str(error)
                 if self.stream._odom_state != 'tracking':
                     self._queue.clear()
+                    if self._capture_clouds is not None:
+                        self._capture_clouds.clear()
+        self._wake.set()
+
+    def _capture_mount(self, msg):
+        try:
+            packet = json.loads(msg.data)
+            with self._lock:
+                if not self._stopped():
+                    self._capture_clouds.mount(packet, self.stream, now=self._receipt_clock(),
+                                               measurement_now_ns=self._measurement_clock_ns())
+        except (TypeError, ValueError) as error:
+            with self._lock:
+                self.stream.last_error = str(error)
+                self._queue.clear()
         self._wake.set()
 
     def _cloud_metadata(self, msg):
@@ -251,8 +280,12 @@ class RtabmapNode(Node):
             digest = hashlib.sha256(bytes(msg.data)).hexdigest() if self.stream.input_contract else None
             with self._lock:
                 if not self._stopped():
-                    self.stream.cloud(stamp, frame, msg, point_count=msg.width*msg.height,
-                        now=self._receipt_clock(), measurement_now_ns=self._measurement_now(), data_sha256=digest)
+                    if self._capture_clouds is not None:
+                        self._capture_clouds.cloud(stamp, frame, msg, msg.width*msg.height, self.stream,
+                            now=self._receipt_clock(), measurement_now_ns=self._measurement_clock_ns())
+                    else:
+                        self.stream.cloud(stamp, frame, msg, point_count=msg.width*msg.height,
+                            now=self._receipt_clock(), measurement_now_ns=self._measurement_now(), data_sha256=digest)
         except ValueError as error:
             with self._lock:
                 self.stream.last_error = str(error)
@@ -519,6 +552,9 @@ class RtabmapNode(Node):
         with self._lock:
             health = self.stream.status(now=self._receipt_clock(), measurement_now_ns=self._measurement_now())
             queued, stopped, forwarded, dropped = len(self._queue), self._stopped(), self._forwarded, self._dropped
+            if self._capture_clouds is not None:
+                health['capture_mount'] = self._capture_clouds.mounts.info(self._measurement_clock_ns())
+                health['waiting_for_capture_mount'] = len(self._capture_clouds.pending)
         with self._result_lock:
             counts = {key: sum(segment[key] for segment in self._segments) for key in
                       ('native_loop_closures', 'native_proximity_detections', 'native_updates')}

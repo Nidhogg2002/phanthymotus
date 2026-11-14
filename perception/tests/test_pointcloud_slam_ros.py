@@ -540,3 +540,28 @@ def test_camera_pose_reference_reaches_native_graph_preview(node):
     x, y, yaw, flags, count = struct.unpack('<fffBI', bytes(packet[:17]))
     assert (x, y, flags, count) == (7., 8., 15, 1)
     assert yaw == pytest.approx(np.pi / 2)
+
+
+def test_gateway_waits_for_each_exact_dynamic_capture_mount(tmp_path, monkeypatch):
+    import plugins.pointcloud_slam_ros as ros
+    from plugins.pointcloud_slam_capture_mount import resolve_capture_mount
+    from test_pointcloud_slam_capture_mount import camera, pose
+    from test_rgbd_body_mount import packet
+    monkeypatch.setattr(ros, 'RtabmapProcess', NativeProcess)
+    cfg, _ = resolve_capture_mount(pose(), camera(), 'camera_optical')
+    n = ros.RtabmapNode('/o', '/c', settings(**cfg), session_dir=tmp_path / 'session')
+    n._receipt_clock = lambda: 1.2
+    n._measurement_clock_ns = lambda: 1_200_000_000
+    try:
+        n.start()
+        n._odom(NS(data=json.dumps(pose())))
+        later = pose(); later['stamp_ms'] = 1200
+        n._odom(NS(data=json.dumps(later)))
+        raw = cloud(1_100_000_123, 'camera_optical')
+        n._cloud(raw)
+        assert n.status()['forwarded_clouds'] == 0
+        sub = next(s for s in n.subscriptions if s.topic == '/camera/rgbd/body_mount')
+        sub.callback(NS(data=json.dumps(packet(1_100_000_123))))
+        assert _wait_until(lambda: n.status()['forwarded_clouds'] == 1)
+    finally:
+        n.close(); n.destroy_node()

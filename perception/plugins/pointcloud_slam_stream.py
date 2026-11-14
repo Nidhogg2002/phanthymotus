@@ -425,7 +425,7 @@ class SlamStream:
                 self.last_error = str(error)
 
     def cloud(self, stamp_ns, frame, cloud, *, now, point_count=None, measurement_now_ns=None,
-              data_sha256=None, capture_context=None):
+              data_sha256=None, capture_context=None, received=None):
         """Retain the opaque native message; XYZ validation belongs to the ROS adapter."""
         if type(stamp_ns) is not int or stamp_ns <= 0 or frame != self.cloud_frame:
             raise ValueError('invalid cloud frame or timestamp')
@@ -442,11 +442,11 @@ class SlamStream:
             raise ValueError('invalid cloud size or capacity')
         if not self.input_contract:
             return self._accept_cloud(stamp_ns, frame, deepcopy(cloud), now=now,
-                measurement_now_ns=measurement_now_ns, capture_context=capture_context)
+                measurement_now_ns=measurement_now_ns, capture_context=capture_context, received=received)
         if not isinstance(data_sha256, str) or len(data_sha256) != 64:
             raise ValueError('cloud payload digest is required')
         key = (stamp_ns, frame, data_sha256)
-        self._unmatched_clouds[key] = (deepcopy(cloud), now)
+        self._unmatched_clouds[key] = (deepcopy(cloud), now if received is None else received)
         while len(self._unmatched_clouds) > self.max_pending:
             self._unmatched_clouds.popitem(last=False)
             self._dropped_pending += 1

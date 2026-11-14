@@ -110,7 +110,7 @@ class PointCloudSlamPlugin:
                        'oneOf': [{'const': k, 'title': k} for k in verbs]},
             'input_topics': {'type': 'array', 'items': {'type': 'string'}},
             'input_bindings': {'type': 'object'}, 'odom_interfaces': {'type': 'object'},
-            'input_metadata': {'type': 'object'},
+            'input_metadata': {'type': 'object'}, 'camera_infos': {'type': 'object'},
             **{key: {'type': 'string'} for key in ('map_id', 'map_name', 'request_id')},
             'background': {'type': 'boolean'}, 'revision': {'type': 'integer'}}, 'required': ['action'],
             'x-action-params': {k: {'params': params} for k, params in _ACTIONS.items()},
@@ -448,10 +448,16 @@ class PointCloudSlamPlugin:
                 ('cloud_frame', 'child_frame', 'clock_id', 'child_from_cloud')):
             odom_topic = next(t for t, f in self._topics.items() if f == 'state/odom')
             cloud_topic = next(t for t, f in self._topics.items() if f == 'sensor/pointcloud2')
+            cameras = self._project_inputs.get('camera_infos', {})
+            camera = cameras.get(cloud_topic) if isinstance(cameras, dict) else None
+            if camera is not None and (not isinstance(camera, dict) or
+                    camera.get('topic') != cloud_topic or camera.get('format') != 'sensor/pointcloud2'):
+                raise ValueError('connected cloud camera_info topic/format mismatch')
             self._runtime_inputs, self._runtime_provenance = discover_runtime_geometry(
                 self._executor, odom_topic, cloud_topic,
                 manual=self._config.get('child_from_cloud'),
-                max_gap_ms=self._config['max_gap_ms'])
+                max_gap_ms=self._config['max_gap_ms'],
+                **({'camera_info': camera} if camera is not None else {}))
         self._require_mapping_inputs(self._settings())
         self._validate(self._settings())
         name = validate_map_name(args.get('map_name'))

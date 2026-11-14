@@ -33,7 +33,7 @@ def reconcile_explicit_extrinsic(manual, producer):
 
 
 def infer_geometry(odom_sample, cloud_frame, cloud_stamp_ns, *, manual=None,
-                   max_gap_ms=200):
+                   max_gap_ms=200, camera_info=None):
     """Build session geometry from actual messages, never robot-model presets.
 
     This legacy-Core route verifies frame names and a contemporaneous timestamp
@@ -52,6 +52,12 @@ def infer_geometry(odom_sample, cloud_frame, cloud_stamp_ns, *, manual=None,
 
     quality = odom_sample['vendor']['motus_slam']
     mount = quality.get('extrinsic')
+    if (mount is None and cloud_frame != pose.child_frame_id and isinstance(camera_info, dict)
+            and isinstance(camera_info.get('vendor'), dict) and camera_info['vendor'].get('body_mount') is not None):
+        if manual is not None:
+            raise ValueError('static card transform cannot replace a declared capture mount')
+        from .pointcloud_slam_capture_mount import resolve_capture_mount
+        return resolve_capture_mount(odom_sample, camera_info, cloud_frame)
     proposed = None
     if mount is not None:
         # The legacy route cannot consume a per-capture TF mount. Reject it
@@ -109,7 +115,7 @@ def infer_geometry(odom_sample, cloud_frame, cloud_stamp_ns, *, manual=None,
 
 
 def discover_runtime_geometry(executor, odom_topic, cloud_topic, *,
-                              manual=None, max_gap_ms=200, timeout_s=5.0):
+                              manual=None, max_gap_ms=200, timeout_s=5.0, camera_info=None):
     """Temporarily subscribe on the already-running executor.
 
     Do not start a second odometry estimator or use ROS arrival time as a
@@ -162,7 +168,7 @@ def discover_runtime_geometry(executor, odom_topic, cloud_topic, *,
                 for sample in reversed(samples):
                     try:
                         return infer_geometry(sample, frame, stamp, manual=manual,
-                                              max_gap_ms=max_gap_ms)
+                                              max_gap_ms=max_gap_ms, camera_info=camera_info)
                     except ValueError as error:
                         last_error = str(error)
                         # A malformed or uncalibrated mount cannot be fixed by

@@ -5075,3 +5075,31 @@ flags and yaw; legacy snapshots without a declared type retain their points
 and position but hide direction on reload. Deploy both the Perception encoder
 and Core renderer to obtain the labels and unavailable-heading handling;
 older renderers ignore the new flags.
+
+### Chassis odometry with a moving camera mount
+
+A connected metric cloud's `camera_info.vendor.body_mount` can now supply the
+runtime-discovery path with a dynamic `motus.camera_mount/1` sidecar. Core
+forwards only the connected cloud declaration. The pose and camera producers
+must explicitly declare matching `clock_reference` fields (`clock_id`,
+`domain_id`, `timestamp_basis=host_realtime`); pose clock_id must agree. The
+reference identifies the existing normalized host timeline, not a verified
+physical camera-clock error bound. No timestamps or clock offsets are rewritten.
+This path is reported as `producer_declared_common_reference` with
+`clock_accuracy_validated=false`. An explicit full SLAM input contract retains
+all its existing verified-relation requirements and cannot use this fallback.
+
+Every cloud waits for its exact nanosecond mount packet. Identity, epoch, source
+clock, frames, proper rigid transform and the existing 500 ms mount freshness
+limit remain mandatory. Pending clouds are bounded; their original receipt time
+continues across both TF and pose waiting. Unavailable packets never provide a
+held transform, and changed identities/clock references require restarting the
+inputs. Each capture's matrix reaches native RTAB-Map via the existing dynamic
+TF path. Estimated installation provenance is retained; no matrix is generated
+from a robot model, and no live pose is replaced by a camera/body approximation.
+
+Requires the matching Core metadata-routing and Driver clock-declaration updates
+as well as Perception. For the optional Tianyi estimated source, retain the
+explicit Driver opt-in and capture-certificate service; rebuilding an image does
+not by itself enable `TIANYI_ESTIMATED_BODY_TF=1`. No running service is changed by
+this implementation. Static camera-reference SLAM remains supported unchanged.
